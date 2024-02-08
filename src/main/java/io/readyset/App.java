@@ -162,7 +162,7 @@ public class App {
             rs.close();
             st.close();
         } catch (SQLException ex) {
-            System.out.println(ex);
+            ex.printStackTrace();
             try {
                 conn.rollback();
             } catch(SQLException e) {
@@ -203,7 +203,7 @@ public class App {
                     break;
             }
         } catch (SQLException ex) {
-            System.out.println(ex);
+            ex.printStackTrace();
             try {
                 conn.rollback();
             } catch(SQLException e) {
@@ -246,12 +246,12 @@ public class App {
 
             PreparedStatement st = conn.prepareStatement("insert into dogs values(?, 'rando')");
             st.setInt(1, id);
-            st.execute();
+            int cnt = st.executeUpdate();
             st.close();
 
             st = conn.prepareStatement("delete from dogs where id = ?");
             st.setInt(1, id);
-            st.execute();
+            cnt = st.executeUpdate();
             st.close();
 
             switch (action) {
@@ -263,7 +263,7 @@ public class App {
                     break;
             }
         } catch (SQLException ex) {
-            System.out.println(ex);
+            ex.printStackTrace();
             try {
                 conn.rollback();
             } catch(SQLException e) {
