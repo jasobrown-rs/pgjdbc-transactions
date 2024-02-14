@@ -17,22 +17,34 @@ public class App {
     
     public static void main(String[] args) throws Exception {
         schemaSetup(getConn());
-        doPreparedStatmentTests(getConn());
+
+        // doPreparedStatmentTests(getConn());
         
-        // // this should succeed, as no transaction is created.
-        doSimpleSelect(getConn(), Action.NO_TRANSACTION);
+        // // // this should succeed, as no transaction is created.
+        // doSimpleSelect(getConn(), Action.NO_TRANSACTION);
 
-        // // this should fail. pgjdbc will see that it needs to (automagically)
-        // // being a transaction, so it sends a BEGIN statement using extended protocol query.
-        doSimpleSelect(getConn(), Action.AUTO_COMMIT);
+        // // // this should fail. pgjdbc will see that it needs to (automagically)
+        // // // being a transaction, so it sends a BEGIN statement using extended protocol query.
+        // doSimpleSelect(getConn(), Action.AUTO_COMMIT);
 
-        doUpdate(getConn());
+        doUpdate(getConn(), false);
+        doUpdate(getConn(), true);
 
-        doInsertAndDelete(getConn(), Action.NO_TRANSACTION);
-        doInsertAndDelete(getConn(), Action.AUTO_COMMIT);
+        // doInsertAndDelete(getConn(), Action.NO_TRANSACTION);
+        // doInsertAndDelete(getConn(), Action.AUTO_COMMIT);
+
+        // doNoDataRead(getConn());
+
+        // batched inserted
+        // doBatchedInserts(getConn(false));
+        // doBatchedInserts(getConn(true));
     }
 
     private static Connection getConn() throws Exception {
+        return getConn(false);
+    }
+
+    private static Connection getConn(boolean doMultiRowDml) throws Exception {
         // Actually, mysql doesn't quite work here as we don't know wtf it's
         // pStmt ids are, and there's no view or tooling to know them.
         String db = System.getenv("DB");
@@ -48,6 +60,11 @@ public class App {
             props.setProperty("ssl", "false");
             props.setProperty("prepareThreshold", "-1");
             //props.setProperty("preparedStatementCacheQueries", "1");
+
+            if (doMultiRowDml) {
+                props.setProperty("reWriteBatchedInserts", "true");
+            }
+            
             conn = DriverManager.getConnection(url, props);
         } else if (db.equals("mysql")) {
             Class.forName("com.mysql.cj.jdbc.Driver");
@@ -71,7 +88,7 @@ public class App {
     private static void schemaSetup(Connection conn) throws SQLException {
         Statement st = conn.createStatement();
         st.execute("drop table if exists dogs");
-        st.execute("create table dogs (id int, name varchar(64))");
+        st.execute("create table dogs (id int, name varchar(64), birth_date timestamp default CURRENT_TIMESTAMP)");
 
         st.execute("insert into dogs values(1, 'kidnap')");
     }
@@ -118,7 +135,7 @@ public class App {
             while (rs.next()) {
                 String id = rs.getString(1);
                 String stmt = rs.getString(2);
-                // holy shit, PG, at least returning them in order :facepalm:
+                // holy shit, PG, at least return them in order :facepalm:
                 if (!stmt.contains("pg_prepared_statements")) {
                     deallocId = id;
                 }
@@ -212,12 +229,20 @@ public class App {
         }
     }
 
-    private static void doUpdate(Connection conn) {
-        System.out.println("********** doUpdate() ***********");
+    private static void doUpdate(Connection conn, boolean updateTimestamp) {
+        System.out.println("********** doUpdate(updateTimestamp: " + updateTimestamp +") ***********");
         try {
-            PreparedStatement st = conn.prepareStatement("update dogs set name = ? where id = ?");
-            st.setString(1, "fido");
-            st.setInt(2, 1);
+            PreparedStatement st;
+            if (updateTimestamp) {
+                st = conn.prepareStatement("update dogs set name = ?, birth_date = ? where id = ?");
+                st.setString(1, "fido");
+                st.setTimestamp(2, new Timestamp(System.currentTimeMillis()));
+                st.setInt(3, 1);
+            } else {
+                st = conn.prepareStatement("update dogs set name = ?  where id = ?");
+                st.setString(1, "fido");
+                st.setInt(2, 1);
+            }
 
             int cnt = st.executeUpdate();
             st.close();
@@ -269,6 +294,68 @@ public class App {
             } catch(SQLException e) {
                 // NOP
             }
+        }
+    }
+
+    private static void doNoDataRead(Connection conn) {
+        System.out.println("********** doNoDataRead() ***********");
+        final int id = 90134136;
+        try {
+            PreparedStatement st = conn.prepareStatement("select name from dogs where id = ?");
+            st.setInt(1, id);
+
+            ResultSet rs = st.executeQuery();
+            while (rs.next()) {
+                System.out.print("Column 1 returned: ");
+                System.out.println(rs.getString(1));
+            }
+            rs.close();
+            st.close();
+        } catch (SQLException ex) {
+            ex.printStackTrace();
+            try {
+                conn.rollback();
+            } catch(SQLException e) {
+                // NOP
+            }            
+        }
+    }
+
+    private static void doBatchedInserts(Connection conn) {
+        System.out.println("********** doBatchedInserts() ***********");
+        final int baseId = 581800;
+        final int insertCount = 4;
+        try {
+            PreparedStatement st = conn.prepareStatement("insert into dogs values(?, ?, ?)");
+
+            for (int i = 0; i < insertCount; i++) {
+                int id = baseId + i;
+                Timestamp ts = new Timestamp(System.currentTimeMillis());
+                st.setInt(1, id);
+                st.setString(2, "t_" + id);
+                st.setTimestamp(3, ts);
+                st.addBatch();
+            }
+            int cnts[] = st.executeBatch();
+            if (cnts.length != insertCount) {
+                System.out.println("different results cnt vs insert stmts: " + cnts.length + " / " + insertCount);
+            }
+
+            for (int i = 0; i < cnts.length; i++) {
+                if (!(cnts[i] == 1 || cnts[i] == Statement.SUCCESS_NO_INFO)) {
+                    System.out.println("result of insert[" + i  + "] != 1: " + cnts[i]);
+                }
+            }
+            
+            st.clearBatch();
+            st.close();
+        } catch (SQLException ex) {
+            ex.printStackTrace();
+            try {
+                conn.rollback();
+            } catch(SQLException e) {
+                // NOP
+            }            
         }
     }
 }
