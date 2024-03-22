@@ -1,3 +1,4 @@
+
 package io.readyset;
 
 import java.sql.*;
@@ -27,7 +28,7 @@ public class App {
         // // // being a transaction, so it sends a BEGIN statement using extended protocol query.
         // doSimpleSelect(getConn(), Action.AUTO_COMMIT);
 
-        doUpdate(getConn(), false);
+        //doUpdate(getConn(), false);
         doUpdate(getConn(), true);
 
         // doInsertAndDelete(getConn(), Action.NO_TRANSACTION);
@@ -88,7 +89,7 @@ public class App {
     private static void schemaSetup(Connection conn) throws SQLException {
         Statement st = conn.createStatement();
         st.execute("drop table if exists dogs");
-        st.execute("create table dogs (id int, name varchar(64), birth_date timestamp default CURRENT_TIMESTAMP)");
+        st.execute("create table dogs (id int, name varchar(64), birth_date timestamptz default CURRENT_TIMESTAMP)");
 
         st.execute("insert into dogs values(1, 'kidnap')");
     }
