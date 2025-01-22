@@ -3,6 +3,7 @@ package io.readyset;
 
 import java.sql.*;
 import java.util.*;
+import org.mariadb.jdbc.*;
 
 public class App {
     static boolean usePg;
@@ -13,25 +14,29 @@ public class App {
     // yourself (either through simple or extended query protocols).
     private enum Action {
         NO_TRANSACTION,
+        NORMAL_TRANSACTION,
         AUTO_COMMIT,
     }
     
     public static void main(String[] args) throws Exception {
         schemaSetup(getConn());
-
-        // doPreparedStatmentTests(getConn());
+        //doMonicaCrmPStmtTest(getConn());
+        // doConnectionParams(getConn());
+        //doPreparedStatmentTests(getConn());
         
         // // // this should succeed, as no transaction is created.
-        // doSimpleSelect(getConn(), Action.NO_TRANSACTION);
+        //doSimpleSelect(getConn(), Action.NO_TRANSACTION);
 
-        // // // this should fail. pgjdbc will see that it needs to (automagically)
-        // // // being a transaction, so it sends a BEGIN statement using extended protocol query.
+        // // this should fail. pgjdbc will see that it needs to (automagically)
+        // // being a transaction, so it sends a BEGIN statement using extended protocol query.
         // doSimpleSelect(getConn(), Action.AUTO_COMMIT);
 
-        //doUpdate(getConn(), false);
-        doUpdate(getConn(), true);
+        // doUpdate(getConn(), false);
+        // doUpdate(getConn(), true);
 
+        doTableAliasing(getConn());
         // doInsertAndDelete(getConn(), Action.NO_TRANSACTION);
+        // doInsertAndDelete(getConn(), Action.NORMAL_TRANSACTION);
         // doInsertAndDelete(getConn(), Action.AUTO_COMMIT);
 
         // doNoDataRead(getConn());
@@ -54,28 +59,39 @@ public class App {
         Connection conn;
         if (db.equals("postgres")) {
             usePg = true;
-            String url = "jdbc:postgresql://localhost:" + port + "/testdb";
+            String url = "jdbc:postgresql://127.0.0.1:" + port + "/noria";
             Properties props = new Properties();
             props.setProperty("user", "postgres");
-            props.setProperty("password", "readyset");
+            props.setProperty("password", "noria");
             props.setProperty("ssl", "false");
-            props.setProperty("prepareThreshold", "-1");
+            props.setProperty("prepareThreshold", "5");
             //props.setProperty("preparedStatementCacheQueries", "1");
 
             if (doMultiRowDml) {
                 props.setProperty("reWriteBatchedInserts", "true");
             }
-            
+
             conn = DriverManager.getConnection(url, props);
         } else if (db.equals("mysql")) {
             Class.forName("com.mysql.cj.jdbc.Driver");
-            String url = "jdbc:mysql://localhost:" + port + "/testdb";
+            String url = "jdbc:mysql://127.0.0.1:" + port + "/noria";
             Properties props = new Properties();
             props.setProperty("user", "root");
-            props.setProperty("password", "readyset");
+            props.setProperty("password", "noria");
             props.setProperty("sslMode", "DISABLED");
             props.setProperty("useServerPrepStmts", "true");
             props.setProperty("emulateUnsupportedPstmts", "false");
+
+            conn = DriverManager.getConnection(url, props);
+        } else if (db.equals("maria")) {
+            Class.forName("org.mariadb.jdbc.Driver");
+            String url = "jdbc:mariadb://127.0.0.1:" + port + "/noria";
+            Properties props = new Properties();
+            props.setProperty("user", "root");
+            props.setProperty("password", "noria");
+            props.setProperty("useSSL", "false"); // default is false
+            props.setProperty("useServerPrepStmts", "true"); // default is true
+
             conn = DriverManager.getConnection(url, props);
         } else {
             throw new IllegalArgumentException("unknown db: " + db);
@@ -89,9 +105,100 @@ public class App {
     private static void schemaSetup(Connection conn) throws SQLException {
         Statement st = conn.createStatement();
         st.execute("drop table if exists dogs");
-        st.execute("create table dogs (id int, name varchar(64), birth_date timestamptz default CURRENT_TIMESTAMP)");
+        st.execute("create table dogs (id int, name varchar(64), birth_date timestamp default CURRENT_TIMESTAMP)");
 
-        st.execute("insert into dogs values(1, 'kidnap')");
+        st.execute("insert into dogs values(1, 'kidnap', now())");
+    }
+
+    private static void doConnectionParams(Connection conn) {
+        System.out.println("********** doConnectionParams() ***********");
+        System.out.println("conn: " + conn);
+        try {
+            System.out.println("conn: " + ((MariaDbConnection)conn).isServerMariaDb());
+            System.out.println("conn.metadata: " + conn.getMetaData().getDatabaseProductVersion());
+            int txIsolation = conn.getTransactionIsolation();
+            System.out.println("tx-level: " + txIsolation);
+        } catch (SQLException ex) {
+            ex.printStackTrace();
+            try {
+                conn.rollback();
+            } catch(SQLException e) {
+                // NOP
+            }
+        }
+    }
+
+    private static void doMonicaCrmPStmtTest(Connection conn) {
+        System.out.println("********** doMonicaCrmPStmtTest() ***********");
+        try {
+            PreparedStatement[] stmts = new PreparedStatement[]{
+                conn.prepareStatement("select * from `tasks` where `tasks`.`contact_id` = ? and `tasks`.`contact_id` is not null"),
+            };
+            
+            for (int i = 0; i < stmts.length * 1; i++) {
+                PreparedStatement st = stmts[i % stmts.length];
+                st.setInt(1, i);
+                ResultSet rs = st.executeQuery();
+                while (rs.next()) {
+                    System.out.println("-- next row");                    
+                }
+                rs.close();
+            }
+
+            if (!usePg) {
+                for (int i = 0; i < stmts.length; i++) {
+                    stmts[i].close();
+                }
+                return;
+            }
+        } catch (SQLException ex) {
+            ex.printStackTrace();
+            try {
+                conn.rollback();
+            } catch(SQLException e) {
+                // NOP
+            }
+        }
+    }
+    
+
+    private static void doTableAliasing(Connection conn) {
+        System.out.println("********** doTableAliasing() ***********");
+        try {
+            Statement s = conn.createStatement();
+            PreparedStatement[] stmts = new PreparedStatement[]{
+                conn.prepareStatement("select distinct i.c2 as col0, i.c1 as col1 from ints as i where i.c1 = ?"),
+            };
+            
+            for (int i = 0; i < stmts.length * 1; i++) {
+                PreparedStatement st = stmts[i % stmts.length];
+                st.setInt(1, i);
+                ResultSet rs = st.executeQuery();
+                while (rs.next()) {
+                    System.out.println("-- next row");                    
+                }
+                rs.close();
+
+                // rs = s.executeQuery("explain last statement");
+                // while (rs.next()) {
+                //     System.out.println("-- next row");                    
+                // }
+            }
+
+            if (!usePg) {
+                for (int i = 0; i < stmts.length; i++) {
+                    stmts[i].close();
+                }
+                return;
+            }
+        } catch (SQLException ex) {
+            ex.printStackTrace();
+            try {
+                conn.rollback();
+            } catch(SQLException e) {
+                // NOP
+            }
+        }
     }
     
     private static void doPreparedStatmentTests(Connection conn) {
@@ -265,12 +372,15 @@ public class App {
                 case NO_TRANSACTION:
                     conn.setAutoCommit(true); 
                     break;
+                case NORMAL_TRANSACTION:
+                    conn.createStatement().execute("start transaction");
+                    break;
                 case AUTO_COMMIT:
                     conn.setAutoCommit(false);
                     break;
             }
 
-            PreparedStatement st = conn.prepareStatement("insert into dogs values(?, 'rando')");
+            PreparedStatement st = conn.prepareStatement("insert into dogs values(?, 'rando', now())");
             st.setInt(1, id);
             int cnt = st.executeUpdate();
             st.close();
@@ -283,6 +393,9 @@ public class App {
             switch (action) {
                 case NO_TRANSACTION:
                     // nop
+                    break;
+                case NORMAL_TRANSACTION:
+                    conn.createStatement().execute("commit");
                     break;
                 case AUTO_COMMIT:
                     conn.commit();
